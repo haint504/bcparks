@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BC Parks Checker</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.0/css/bulma.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"
+            integrity="sha256-4+XzXVhsDmqanXGHaHvgh1gMQKX40OUvDEBTu8JcmNs="
+            crossorigin="anonymous"></script>
+    <script type="text/javascript">
+        async function postData(url = '', data = {}) {
+            const response = await fetch(url, {
+                method: 'POST',
+                mode: 'cors',
+                cache: 'no-cache',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                body: JSON.stringify(data) // body data type must match "Content-Type" header
+            });
+            return response.json();
+        }
+
+        function is_available_slice(date_slice, is_walkin = true) {
+            return date_slice['IsFree'] || (is_walkin && date_slice['IsWalkin'])
+        }
+
+        function is_available(unit, is_walkin = true) {
+            return Object.values(unit['Slices']).every(slice => is_available_slice(slice, is_walkin));
+        }
+
+        function update_storage(data) {
+            const size = data.length;
+            const item = localStorage.getItem('last');
+            if (!item) {
+                localStorage.setItem('last', JSON.stringify({size: data.length, time: new Date()}));
+                return localStorage.getItem('prev');
+            } else {
+                const last = JSON.parse(item);
+                if (last.size !== size) {
+                    localStorage.setItem('prev', item);
+                    localStorage.setItem('last', JSON.stringify({size: data.length, time: new Date()}));
+                }
+                return last;
+            }
+        }
+
+        async function get_available_units(facility_id, start_date, end_date) {
+            const data = await postData('https://bccrdr.usedirect.com/rdr/rdr/search/grid', {
+                'FacilityId': facility_id,
+                'StartDate': start_date,
+                'EndDate': end_date,
+                'InSeasonOnly': true,
+                'WebOnly': true
+            });
+            return Object.values(data['Facility']['Units']).filter(is_available);
+        }
+        let dates; // cached dates
+        function update() {
+            const facility_id = 189; // Sasquatch
+            const start_date = '08-20-2020';
+            const end_date = '08-23-2020';
+            get_available_units(facility_id, start_date, end_date).then(data => {
+                // Get all available dates from first item
+                if (!dates) {
+                    dates = Object.values(data[0]['Slices']).map(slice => slice['Date']);
+                    dates.forEach(date => $("#site-table>thead>tr").append("<th>" + date + "</th>"));
+                }
+                $("#site-table>tbody").empty();
+                data.forEach(unit => {
+                    let element = '<tr>';
+                    element += '<td>' + unit['UnitId'] + '</td>';
+                    element += '<td>' + unit['Name'] + '</td>';
+                    dates.forEach(date => {
+                        const slice = Object.values(unit['Slices']).find(slice => slice['Date'] === date);
+                        const color = is_available_slice(slice, true) ? (slice['IsBlocked'] ? 'orange': 'green') : 'red';
+                        element += '<td style="background-color:' + color + ';"/>';
+                    })
+                    $("#site-table>tbody").append(element);
+                });
+                const last = update_storage(data);
+                const changes = last ? "Changes from previous check: <strong>" + (last.size - data.length) + "</strong><br />" : "";
+                $("#notification").html("Current available: <strong>" + data.length + "</strong>" +
+                    "<br />" +
+                    changes +
+                    "Last update: " + new Date());
+                // check storage
+                setTimeout(update, 60000);
+            });
+        }
+
+        $(document).ready(function() {
+            update();
+        });
+    </script>
+</head>
+<body>
+<div class="container">
+    <p id="notification" class="subtitle">
+    </p>
+    <table id="site-table" class="table is-bordered is-hoverable is-striped">
+        <thead>
+        <tr>
+            <th>Unit Id</th>
+            <th>Name</th>
+        </tr>
+        </thead>
+        <tbody>
+        </tbody>
+    </table>
+</div>
+</body>
+</html>
